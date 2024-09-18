@@ -362,10 +362,20 @@ func (c DeviceCharacteristic) Read(data []byte) (int, error) {
 }
 
 // EnableNotifications enables notifications in the Client Characteristic
+// Configuration Descriptor (CCCD). Just the Notify mode is supported.
+func (c DeviceCharacteristic) EnableNotifications(callback func(buf []byte)) error {
+	err := c.EnableNotificationsWithMode(false, callback)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// EnableNotifications enables notifications in the Client Characteristic
 // Configuration Descriptor (CCCD). This means that most peripherals will send a
 // notification with a new value every time the value of the characteristic
 // changes.
-func (c DeviceCharacteristic) EnableNotifications(usingIndicate bool, callback func(buf []byte)) error {
+func (c DeviceCharacteristic) EnableNotificationsWithMode(usingIndicate bool, callback func(buf []byte)) error {
 	if usingIndicate {
 		if c.properties&genericattributeprofile.GattCharacteristicPropertiesIndicate == 0 {
 			return errNoIndicate
