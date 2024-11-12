@@ -21,7 +21,16 @@ var (
 	errNoRead                    = errors.New("bluetooth: read not supported")
 	errNoNotify                  = errors.New("bluetooth: notify not supported")
 	errNoIndicate                = errors.New("bluetooth: indicate not supported")
+	errNoNotifyOrIndicate        = errors.New("bluetooth: notify or indicate not supported")
+	errInvalidNotificationMode   = errors.New("bluetooth: invalid notification mode")
 	errEnableNotificationsFailed = errors.New("bluetooth: enable notifications failed")
+)
+
+type NotificationMode = genericattributeprofile.GattCharacteristicProperties
+
+const (
+	NotificationModeNotify   NotificationMode = genericattributeprofile.GattCharacteristicPropertiesNotify
+	NotificationModeIndicate NotificationMode = genericattributeprofile.GattCharacteristicPropertiesIndicate
 )
 
 // DiscoverServices starts a service discovery procedure. Pass a list of service
@@ -361,29 +370,44 @@ func (c DeviceCharacteristic) Read(data []byte) (int, error) {
 	return len(readBuffer), nil
 }
 
-// EnableNotifications enables notifications in the Client Characteristic
-// Configuration Descriptor (CCCD). Just the Notify mode is supported.
+// EnableNotifications enables notifications or indicate in the Client Characteristic
+// Configuration Descriptor (CCCD). And it favors Notify over Indicate.
 func (c DeviceCharacteristic) EnableNotifications(callback func(buf []byte)) error {
-	err := c.EnableNotificationsWithMode(false, callback)
+	var err error
+	if c.properties&genericattributeprofile.GattCharacteristicPropertiesNotify == 0 {
+		err = c.EnableNotificationsWithMode(NotificationModeNotify, callback)
+	} else if c.properties&genericattributeprofile.GattCharacteristicPropertiesIndicate == 0 {
+		err = c.EnableNotificationsWithMode(NotificationModeIndicate, callback)
+	} else {
+		return errNoNotifyOrIndicate
+	}
+
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-// EnableNotifications enables notifications in the Client Characteristic
+// EnableNotificationsWithMode enables notifications in the Client Characteristic
 // Configuration Descriptor (CCCD). This means that most peripherals will send a
 // notification with a new value every time the value of the characteristic
-// changes.
-func (c DeviceCharacteristic) EnableNotificationsWithMode(usingIndicate bool, callback func(buf []byte)) error {
-	if usingIndicate {
+// changes. And you can select the notify/indicate mode as you need.
+func (c DeviceCharacteristic) EnableNotificationsWithMode(mode NotificationMode, callback func(buf []byte)) error {
+	configValue := genericattributeprofile.GattClientCharacteristicConfigurationDescriptorValueNone
+	if mode == NotificationModeIndicate {
 		if c.properties&genericattributeprofile.GattCharacteristicPropertiesIndicate == 0 {
 			return errNoIndicate
 		}
-	} else {
+		// set to indicate mode
+		configValue = genericattributeprofile.GattClientCharacteristicConfigurationDescriptorValueIndicate
+	} else if mode == NotificationModeNotify {
 		if c.properties&genericattributeprofile.GattCharacteristicPropertiesNotify == 0 {
 			return errNoNotify
 		}
+		// set to notify mode
+		configValue = genericattributeprofile.GattClientCharacteristicConfigurationDescriptorValueNotify
+	} else {
+		return errInvalidNotificationMode
 	}
 
 	// listen value changed event
@@ -420,16 +444,7 @@ func (c DeviceCharacteristic) EnableNotificationsWithMode(usingIndicate bool, ca
 		return err
 	}
 
-	var writeOp *foundation.IAsyncOperation
-	if usingIndicate {
-		if c.properties&genericattributeprofile.GattCharacteristicPropertiesIndicate != 0 {
-			writeOp, err = c.characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(genericattributeprofile.GattClientCharacteristicConfigurationDescriptorValueIndicate)
-		}
-	} else {
-		if c.properties&genericattributeprofile.GattCharacteristicPropertiesNotify != 0 {
-			writeOp, err = c.characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(genericattributeprofile.GattClientCharacteristicConfigurationDescriptorValueNotify)
-		}
-	}
+	writeOp, err := c.characteristic.WriteClientCharacteristicConfigurationDescriptorAsync(configValue)
 	if err != nil {
 		return err
 	}
